@@ -1,67 +1,54 @@
 use chrono::{DateTime, Datelike, Days, Weekday, prelude::Local};
 use std::ops::Sub;
+use std::thread;
+use std::time::Duration;
 use std::{fs, path::PathBuf};
-use sysinfo::{Pid, Signal, System};
+use sysinfo::{Signal, System};
 
 const BOX: &str = "[ ]";
 const _COMPLETED_BOX: &str = "[x]";
 const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
-
+const APP_FOLDER_NAME: &str = "abs_todo";
+const BLACKLISTED_APPS_FILE: &str = "apps.txt";
 fn main() {
-    let this_month_progress = show_month_progress();
-    println!("{this_month_progress:?}");
-
-    // let system_name = System::name().unwrap();
-    // let open_apps: Result<Vec<String>, String> = match system_name.as_str() {
-    //     "Windows" => Ok(running_system_info_apps()),
-    //     "Ubuntu" => Ok(running_proc_apps()),
-    //     _ => Err("? Operation System not found".to_string()),
-    // };
-
-    // let test = app_pid("chrome.exe").unwrap();
-
-    let mut apps: Vec<String> = Vec::new();
-
-    // if it's windows still need to do a bool
-    // also need to create folder and filesname
+    //only windows for now
+    let _this_month_progress = show_month_progress();
     // next I need to create TUI or CLI for adding .exe
-    let mut path = PathBuf::from(std::env::var("APPDATA").unwrap());
-    path.push("abs_todo");
-    path.push("apps.txt");
 
-    if let Ok(lines) = fs::read_to_string(path) {
-        println!("nothign?");
-        for line in lines.lines() {
-            apps.push(line.to_string());
-            println!("why not pushing? {}", line.to_string());
-        }
+    let running_apps = RunningApplications;
+
+    let apps = running_apps.get_app_names();
+
+    loop {
+        thread::sleep(Duration::from_secs(2));
+        running_apps.close_apps(&apps);
     }
-    println!("{apps:?}");
-    let running_apps = RunningApplications { apps };
-
-    running_apps.close_apps();
 }
 
-struct RunningApplications {
-    apps: Vec<String>,
-}
+struct RunningApplications;
 
 impl RunningApplications {
-    fn new() -> RunningApplications {
-        RunningApplications {
-            apps: vec![String::from("")],
+    fn get_app_names(&self) -> Vec<String> {
+        let mut apps: Vec<String> = Vec::new();
+        let path = get_file_path();
+
+        if let Ok(lines) = fs::read_to_string(&path) {
+            for line in lines.lines() {
+                apps.push(line.to_string());
+            }
+        } else {
+            fs::write(&path, "").unwrap();
         }
+
+        apps
     }
 
-    fn close_apps(&self) {
-        let closing_apps = &self.apps;
+    fn _add_apps_to_file(&self) {}
 
-        println!("{:?}", closing_apps);
+    fn close_apps(&self, app_names: &Vec<String>) {
         if let Ok(sys) = System::new_all() {
-            for app in closing_apps {
-                println!("should run twice");
+            for app in app_names {
                 for process in sys.processes_by_name(app.as_ref()) {
-                    println!("{} {:?}", process.pid(), process.name());
                     if process.kill_with(Signal::Kill).is_none() {
                         println!("signal not supported");
                     }
@@ -130,42 +117,7 @@ fn show_month_progress() -> Vec<String> {
     v_weekdays
 }
 
-// fn running_proc_apps() -> Vec<String> {
-//     let proc = "/proc";
-//     let testfile = fs::read_dir(proc).unwrap();
-//
-//     let mut file_names: Vec<String> = Vec::new();
-//
-//     for i in testfile {
-//         let test = i.unwrap();
-//         let name = test.file_name();
-//         let as_str = name.to_str().unwrap();
-//
-//         if as_str.chars().next().unwrap().is_ascii_digit() {
-//             let new_file = fs::read_to_string(format!("/proc/{}/comm", as_str));
-//             file_names.push(new_file.unwrap());
-//         }
-//     }
-//
-//     file_names
-// }
-
-// fn running_system_info_apps() -> Vec<String> {
-//     let mut apps = Vec::new();
-//
-//     if let Ok(mut sys) = System::new_all() {
-//         sys.refresh_all();
-//
-//         for (pid, process) in sys.processes() {
-//             let process_name_str = process.name().to_str().unwrap();
-//             apps.push(process_name_str.to_string());
-//         }
-//     };
-//
-//     apps
-// }
-
-fn app_pid(app_name: &str) -> Result<u32, String> {
+fn _app_pid(app_name: &str) -> Result<u32, String> {
     // i think we can change new_all to processes only
     if let Ok(mut sys) = System::new_all() {
         sys.refresh_all();
@@ -178,4 +130,19 @@ fn app_pid(app_name: &str) -> Result<u32, String> {
         }
     };
     Err("Couldn't find the application".to_string())
+}
+
+fn get_file_path() -> PathBuf {
+    let Ok(appdata_path) = std::env::var("APPDATA") else {
+        eprintln!("APPDATA is not found");
+        std::process::exit(1);
+    };
+
+    let mut path = PathBuf::from(appdata_path);
+    path.push(APP_FOLDER_NAME);
+
+    fs::create_dir(&path).unwrap();
+
+    path.push(BLACKLISTED_APPS_FILE);
+    path
 }
