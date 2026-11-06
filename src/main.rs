@@ -1,4 +1,5 @@
 use chrono::{DateTime, Datelike, Days, Weekday, prelude::Local};
+use eframe::egui;
 use std::ops::Sub;
 use std::thread;
 use std::time::Duration;
@@ -10,6 +11,7 @@ const _COMPLETED_BOX: &str = "[x]";
 const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 const APP_FOLDER_NAME: &str = "abs_todo";
 const BLACKLISTED_APPS_FILE: &str = "apps.txt";
+
 fn main() {
     //only windows for now
     let _this_month_progress = show_month_progress();
@@ -19,10 +21,19 @@ fn main() {
 
     let apps = running_apps.get_app_names();
 
+    gui_test();
     loop {
         thread::sleep(Duration::from_secs(2));
         running_apps.close_apps(&apps);
     }
+}
+
+fn gui_test() -> eframe::Result {
+    let mut apps: Vec<String> = Vec::new();
+
+    eframe::run_ui_native("My App", Default::default(), move |ui, _frame| {
+        ui.label("Hello");
+    })
 }
 
 struct RunningApplications;
