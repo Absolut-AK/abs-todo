@@ -49,6 +49,10 @@ impl RunningApplications {
         if let Ok(sys) = System::new_all() {
             for app in app_names {
                 for process in sys.processes_by_name(app.as_ref()) {
+                    println!(
+                        "come on man... why you are trying to procastinate?: going to close it now {:?}",
+                        process.name()
+                    );
                     if process.kill_with(Signal::Kill).is_none() {
                         println!("signal not supported");
                     }
@@ -141,7 +145,9 @@ fn get_file_path() -> PathBuf {
     let mut path = PathBuf::from(appdata_path);
     path.push(APP_FOLDER_NAME);
 
-    fs::create_dir(&path).unwrap();
+    if fs::read_dir(&path).is_err() {
+        fs::create_dir(&path).unwrap();
+    }
 
     path.push(BLACKLISTED_APPS_FILE);
     path
