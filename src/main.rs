@@ -1,10 +1,13 @@
 use chrono::{DateTime, Datelike, Days, Weekday, prelude::Local};
-use eframe::egui;
+use eframe::egui::{self, FontDefinitions, ThemePreference};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::ops::Sub;
+use std::sync::mpsc::{Sender, channel};
 use std::thread;
 use std::time::Duration;
 use std::{fs, path::PathBuf};
-use sysinfo::{Signal, System};
+use sysinfo::{ProcessRefreshKind, RefreshKind, Signal, System};
 
 const BOX: &str = "[ ]";
 const _COMPLETED_BOX: &str = "[x]";
@@ -19,23 +22,93 @@ fn main() {
 
     let running_apps = RunningApplications;
 
-    let apps = running_apps.get_app_names();
+    //later on I want this to be inside a struct so it can detect new changes to the file
+    let mut apps = running_apps.get_app_names();
 
-    gui_test();
-    loop {
-        thread::sleep(Duration::from_secs(2));
-        running_apps.close_apps(&apps);
+    let native_option = eframe::NativeOptions::default();
+
+    let Ok(mut sys) = System::new() else {
+        eprintln!("couldn't read system info");
+        return;
+    };
+
+    let (tx, rx) = channel();
+
+    //closing apps on repeat
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            running_apps.close_apps(&apps, &mut sys);
+
+            while let Ok(receive) = rx.try_recv() {
+                apps.push(receive);
+            }
+        }
+    });
+
+    //eframe
+    let _ = eframe::run_native(
+        "abs_todo",
+        native_option,
+        Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc, tx)))),
+    );
+}
+
+#[derive(Default)]
+struct MyEguiApp {
+    n: i32,
+    done: bool,
+    app_name: String,
+}
+
+impl MyEguiApp {
+    fn new(cc: &eframe::CreationContext<'_>, _tx: Sender<String>) -> Self {
+        let mut fonts = FontDefinitions::default();
+
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap();
+        cc.egui_ctx.set_fonts(fonts);
+
+        cc.egui_ctx.set_theme(ThemePreference::Light);
+        Self::default()
     }
 }
 
-fn gui_test() -> eframe::Result {
-    let mut apps: Vec<String> = Vec::new();
+impl eframe::App for MyEguiApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.heading("ABS_TODO");
+            ui.label(
+                "Open you application first\n
+                Write the .exe name of the application\n
+                The application will close if it is the correct file name",
+            );
+            //Text box so I can add more .exe files
+            ui.text_edit_singleline(&mut self.app_name);
+            if ui.button("Add app").clicked() {
+                let path = get_file_path();
 
-    eframe::run_ui_native("My App", Default::default(), move |ui, _frame| {
-        ui.label("Hello");
-    })
+                let mut file = OpenOptions::new()
+                    .append(true)
+                    .create(true)
+                    .open(path)
+                    .unwrap();
+
+                writeln!(file, "{}", &self.app_name).unwrap();
+                self.app_name = String::from("");
+            }
+            //Text box for adding daily and would create another line of Text box + checkBox
+
+            //Show daily streak progress
+
+            //Show a new screen for finishing daily (unblock blocking loop)
+            ui.add(egui::Slider::new(&mut self.n, 0..=100));
+            ui.checkbox(&mut self.done, "Done");
+        });
+    }
 }
-
 struct RunningApplications;
 
 impl RunningApplications {
@@ -54,19 +127,17 @@ impl RunningApplications {
         apps
     }
 
-    fn _add_apps_to_file(&self) {}
+    fn close_apps(&self, app_names: &Vec<String>, sys: &mut System) {
+        sys.refresh_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()));
 
-    fn close_apps(&self, app_names: &Vec<String>) {
-        if let Ok(sys) = System::new_all() {
-            for app in app_names {
-                for process in sys.processes_by_name(app.as_ref()) {
-                    println!(
-                        "come on man... why you are trying to procastinate?: going to close it now {:?}",
-                        process.name()
-                    );
-                    if process.kill_with(Signal::Kill).is_none() {
-                        println!("signal not supported");
-                    }
+        for app in app_names {
+            for process in sys.processes_by_name(app.as_ref()) {
+                println!(
+                    "come on man... why you are trying to procastinate?: going to close it now {:?}",
+                    process.name()
+                );
+                if process.kill_with(Signal::Kill).is_none() {
+                    println!("signal not supported");
                 }
             }
         }
@@ -130,21 +201,6 @@ fn show_month_progress() -> Vec<String> {
     }
 
     v_weekdays
-}
-
-fn _app_pid(app_name: &str) -> Result<u32, String> {
-    // i think we can change new_all to processes only
-    if let Ok(mut sys) = System::new_all() {
-        sys.refresh_all();
-
-        for (pid, process) in sys.processes() {
-            let process_name = process.name().to_str().unwrap();
-            if process_name == app_name {
-                return Ok(pid.as_u32());
-            }
-        }
-    };
-    Err("Couldn't find the application".to_string())
 }
 
 fn get_file_path() -> PathBuf {
