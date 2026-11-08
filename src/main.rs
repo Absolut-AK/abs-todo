@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use chrono::{DateTime, Datelike, Days, Weekday, prelude::Local};
 use eframe::egui::{self, FontDefinitions, ThemePreference};
 use std::fs::OpenOptions;
