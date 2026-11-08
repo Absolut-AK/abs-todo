@@ -4,6 +4,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::ops::Sub;
 use std::sync::mpsc::{Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use std::{fs, path::PathBuf};
@@ -21,7 +22,7 @@ fn main() {
 
     let running_apps = RunningApplications;
 
-    let mut apps = running_apps.get_app_names();
+    let apps = running_apps.get_app_names();
 
     let native_option = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -38,14 +39,17 @@ fn main() {
 
     let (tx, rx) = channel();
 
+    let apps = Arc::new(Mutex::new(apps));
+    let apps_for_thread = Arc::clone(&apps);
+
     //closing apps on repeat
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
-            running_apps.close_apps(&apps, &mut sys);
+            running_apps.close_apps(&apps_for_thread, &mut sys);
 
             while let Ok(receive) = rx.try_recv() {
-                apps.push(receive);
+                apps_for_thread.lock().unwrap().push(receive);
             }
         }
     });
@@ -54,7 +58,7 @@ fn main() {
     let _ = eframe::run_native(
         "abs_todo",
         native_option,
-        Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc, tx)))),
+        Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc, tx, apps)))),
     );
 }
 #[derive(Default)]
@@ -64,16 +68,20 @@ struct Daily {
 }
 #[derive(Default)]
 struct MyEguiApp {
+    apps: Arc<Mutex<Vec<String>>>,
     tx: Option<Sender<String>>,
     app_name: String,
     daily: String,
     dailies: Vec<Daily>,
-    n: i32,
     done: bool,
 }
 
 impl MyEguiApp {
-    fn new(cc: &eframe::CreationContext<'_>, tx: Sender<String>) -> Self {
+    fn new(
+        cc: &eframe::CreationContext<'_>,
+        tx: Sender<String>,
+        apps: Arc<Mutex<Vec<String>>>,
+    ) -> Self {
         let mut fonts = FontDefinitions::default();
 
         fonts
@@ -82,11 +90,12 @@ impl MyEguiApp {
             .unwrap();
         cc.egui_ctx.set_fonts(fonts);
 
-        cc.egui_ctx.set_theme(ThemePreference::Light);
+        cc.egui_ctx.set_theme(ThemePreference::Dark);
         apply_style(&cc.egui_ctx);
 
         Self {
             tx: Some(tx),
+            apps,
             ..Default::default()
         }
     }
@@ -118,6 +127,7 @@ impl eframe::App for MyEguiApp {
                                 .hint_text("e.g. steam.exe")
                                 .desired_width(ui.available_width() - 90.0),
                         );
+
                         if ui.button("Add app").clicked() {
                             let path = get_file_path();
 
@@ -137,6 +147,17 @@ impl eframe::App for MyEguiApp {
                             self.app_name = String::from("");
                         }
                     });
+
+                    ui.add_space(6.0);
+                    {
+                        let apps = self.apps.lock().unwrap();
+                        if apps.is_empty() {
+                            ui.label(egui::RichText::new("No blocked apps yet.").weak().italics());
+                        }
+                        for app in apps.iter() {
+                            app_row(ui, app);
+                        }
+                    }
                 });
 
                 ui.add_space(10.0);
@@ -190,13 +211,32 @@ impl eframe::App for MyEguiApp {
 
 // ---- UI styling (written by Claude) ----
 
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(79, 70, 229);
+// Dark grayscale palette: no pure white, so it's easy on the eyes in a dark room.
+const BG: egui::Color32 = egui::Color32::from_gray(15);
+const CARD: egui::Color32 = egui::Color32::from_gray(26);
+const CARD_STROKE: egui::Color32 = egui::Color32::from_gray(38);
+const ROW: egui::Color32 = egui::Color32::from_gray(34);
+const TEXT: egui::Color32 = egui::Color32::from_gray(205);
+const TEXT_STRONG: egui::Color32 = egui::Color32::from_gray(232);
+const TEXT_WEAK: egui::Color32 = egui::Color32::from_gray(125);
 
-/// Draws a white rounded "card" with a title, and puts `add_contents` inside it.
+/// One blocked app shown as a small rounded row.
+fn app_row(ui: &mut egui::Ui, name: &str) {
+    egui::Frame::new()
+        .fill(ROW)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(egui::RichText::new(name).monospace());
+        });
+}
+
+/// Draws a dark rounded "card" with a title, and puts `add_contents` inside it.
 fn card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
-        .fill(egui::Color32::WHITE)
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(225)))
+        .fill(CARD)
+        .stroke(egui::Stroke::new(1.0, CARD_STROKE))
         .corner_radius(10.0)
         .inner_margin(14.0)
         .show(ui, |ui| {
@@ -209,9 +249,11 @@ fn card(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)
 
 /// Font sizes, spacing, colors and rounded corners for the whole app.
 fn apply_style(ctx: &egui::Context) {
-    use egui::{Color32, FontId, TextStyle};
+    use egui::{Color32, FontId, Stroke, TextStyle};
 
     ctx.all_styles_mut(|style| {
+        style.visuals = egui::Visuals::dark();
+
         style
             .text_styles
             .insert(TextStyle::Heading, FontId::proportional(26.0));
@@ -230,23 +272,46 @@ fn apply_style(ctx: &egui::Context) {
         style.spacing.interact_size.y = 28.0;
 
         let v = &mut style.visuals;
-        v.panel_fill = Color32::from_rgb(246, 245, 242);
-        v.selection.bg_fill = ACCENT.linear_multiply(0.35);
-        v.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-        v.hyperlink_color = ACCENT;
+        v.panel_fill = BG;
+        v.window_fill = BG;
+        v.extreme_bg_color = Color32::from_gray(12);
+        v.text_edit_bg_color = Some(Color32::from_gray(20));
+        v.faint_bg_color = Color32::from_gray(22);
+        v.weak_text_color = Some(TEXT_WEAK);
+        v.hyperlink_color = Color32::from_gray(180);
+        v.selection.bg_fill = Color32::from_gray(70);
+        v.selection.stroke = Stroke::new(1.0, Color32::from_gray(200));
+        v.text_cursor.stroke = Stroke::new(2.0, TEXT);
+
+        let w = &mut v.widgets;
+        // labels and other non-clickable things
+        w.noninteractive.bg_fill = CARD;
+        w.noninteractive.bg_stroke = Stroke::new(1.0, CARD_STROKE);
+        w.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+        // buttons / checkboxes: at rest, hovered, pressed
+        w.inactive.weak_bg_fill = Color32::from_gray(40);
+        w.inactive.bg_fill = Color32::from_gray(44);
+        w.inactive.bg_stroke = Stroke::new(1.0, Color32::from_gray(50));
+        w.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+        w.hovered.weak_bg_fill = Color32::from_gray(52);
+        w.hovered.bg_fill = Color32::from_gray(56);
+        w.hovered.bg_stroke = Stroke::new(1.0, Color32::from_gray(90));
+        w.hovered.fg_stroke = Stroke::new(1.5, TEXT_STRONG);
+        w.active.weak_bg_fill = Color32::from_gray(64);
+        w.active.bg_fill = Color32::from_gray(66);
+        w.active.bg_stroke = Stroke::new(1.0, Color32::from_gray(110));
+        w.active.fg_stroke = Stroke::new(1.5, TEXT_STRONG);
+        w.open = w.active;
 
         for w in [
-            &mut v.widgets.inactive,
-            &mut v.widgets.hovered,
-            &mut v.widgets.active,
-            &mut v.widgets.open,
+            &mut w.noninteractive,
+            &mut w.inactive,
+            &mut w.hovered,
+            &mut w.active,
+            &mut w.open,
         ] {
             w.corner_radius = 6.into();
         }
-        v.widgets.inactive.weak_bg_fill = Color32::from_gray(236);
-        v.widgets.hovered.weak_bg_fill = Color32::from_rgb(224, 222, 250);
-        v.widgets.active.weak_bg_fill = Color32::from_rgb(205, 201, 247);
-        v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, ACCENT);
     });
 }
 
@@ -268,10 +333,10 @@ impl RunningApplications {
         apps
     }
 
-    fn close_apps(&self, app_names: &Vec<String>, sys: &mut System) {
+    fn close_apps(&self, app_names: &Arc<Mutex<Vec<String>>>, sys: &mut System) {
         sys.refresh_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()));
 
-        for app in app_names {
+        for app in app_names.lock().unwrap().iter() {
             for process in sys.processes_by_name(app.as_ref()) {
                 println!(
                     "come on man... why you are trying to procastinate?: going to close it now {:?}",
