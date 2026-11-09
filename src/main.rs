@@ -23,7 +23,7 @@ fn main() {
 
     let running_apps = RunningApplications;
 
-    let apps = running_apps.get_app_names();
+    let apps = running_apps.get_app_names_as_checkboxes();
 
     let native_option = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -63,25 +63,25 @@ fn main() {
     );
 }
 #[derive(Default)]
-struct Daily {
+struct NameNBox {
     name: String,
     done: bool,
 }
 #[derive(Default)]
 struct MyEguiApp {
-    apps: Arc<Mutex<Vec<String>>>,
-    tx: Option<Sender<String>>,
+    apps: Arc<Mutex<Vec<NameNBox>>>,
+    tx: Option<Sender<NameNBox>>,
+    dailies: Vec<NameNBox>,
     app_name: String,
     daily: String,
-    dailies: Vec<Daily>,
     done: bool,
 }
 
 impl MyEguiApp {
     fn new(
         cc: &eframe::CreationContext<'_>,
-        tx: Sender<String>,
-        apps: Arc<Mutex<Vec<String>>>,
+        tx: Sender<NameNBox>,
+        apps: Arc<Mutex<Vec<NameNBox>>>,
     ) -> Self {
         let mut fonts = FontDefinitions::default();
 
@@ -137,28 +137,44 @@ impl eframe::App for MyEguiApp {
                                 .create(true)
                                 .open(path)
                                 .unwrap();
+                            let namenbox = NameNBox {
+                                name: self.app_name.trim().to_string().clone(),
+                                done: false,
+                            };
 
-                            self.tx
-                                .clone()
-                                .unwrap()
-                                .send(self.app_name.clone())
-                                .unwrap();
+                            if !self.app_name.trim().is_empty() {
+                                self.tx.clone().unwrap().send(namenbox).unwrap();
 
-                            writeln!(file, "{}", &self.app_name).unwrap();
-                            self.app_name = String::from("");
+                                writeln!(file, "{}", &self.app_name.trim()).unwrap();
+                                self.app_name = String::from("");
+                            }
                         }
                     });
 
                     ui.add_space(6.0);
-                    {
-                        let apps = self.apps.lock().unwrap();
-                        if apps.is_empty() {
-                            ui.label(egui::RichText::new("No blocked apps yet.").weak().italics());
-                        }
-                        for app in apps.iter() {
-                            app_row(ui, app);
+                    let mut apps = self.apps.lock().unwrap();
+                    if apps.is_empty() {
+                        ui.label(egui::RichText::new("No blocked apps yet.").weak().italics());
+                    }
+                    let mut removed_app_name = String::from("");
+                    for app in apps.iter() {
+                        app_row(ui, &app.name);
+                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                            removed_app_name = app.name.clone();
+                            let path = get_file_path();
+                            let content = fs::read_to_string(&path).unwrap();
+
+                            let mut kept = String::new();
+                            for line in content.lines() {
+                                if line.trim() != app.name {
+                                    kept.push_str(line);
+                                    kept.push('\n');
+                                }
+                            }
+                            fs::write(path, kept).unwrap();
                         }
                     }
+                    apps.retain(|apps| apps.name != removed_app_name);
                 });
 
                 ui.add_space(10.0);
@@ -173,7 +189,7 @@ impl eframe::App for MyEguiApp {
                         );
 
                         if ui.button("Add daily").clicked() {
-                            let daily = Daily {
+                            let daily = NameNBox {
                                 name: std::mem::take(&mut self.daily),
                                 done: false,
                             };
@@ -319,13 +335,17 @@ fn apply_style(ctx: &egui::Context) {
 struct RunningApplications;
 
 impl RunningApplications {
-    fn get_app_names(&self) -> Vec<String> {
-        let mut apps: Vec<String> = Vec::new();
+    fn get_app_names_as_checkboxes(&self) -> Vec<NameNBox> {
+        let mut apps: Vec<NameNBox> = Vec::new();
         let path = get_file_path();
 
         if let Ok(lines) = fs::read_to_string(&path) {
             for line in lines.lines() {
-                apps.push(line.to_string());
+                let checkbox = NameNBox {
+                    name: line.to_string(),
+                    done: false,
+                };
+                apps.push(checkbox);
             }
         } else {
             fs::write(&path, "").unwrap();
@@ -334,11 +354,11 @@ impl RunningApplications {
         apps
     }
 
-    fn close_apps(&self, app_names: &Arc<Mutex<Vec<String>>>, sys: &mut System) {
+    fn close_apps(&self, app_names: &Arc<Mutex<Vec<NameNBox>>>, sys: &mut System) {
         sys.refresh_specifics(RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()));
 
         for app in app_names.lock().unwrap().iter() {
-            for process in sys.processes_by_name(app.as_ref()) {
+            for process in sys.processes_by_name(app.name.as_ref()) {
                 println!(
                     "come on man... why you are trying to procastinate?: going to close it now {:?}",
                     process.name()
