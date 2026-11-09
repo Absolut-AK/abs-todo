@@ -17,6 +17,7 @@ const _COMPLETED_BOX: &str = "[x]";
 const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 const APP_FOLDER_NAME: &str = "abs_todo";
 const BLACKLISTED_APPS_FILE: &str = "apps.txt";
+const DAILIES_FILE: &str = "dailies.txt";
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn main() {
@@ -46,7 +47,7 @@ fn main() {
     let apps_for_thread = Arc::clone(&apps);
 
     //closing apps on repeat
-    thread::spawn(move || {
+    let handle = thread::spawn(move || {
         while RUNNING.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(2));
             running_apps.close_apps(&apps_for_thread, &mut sys);
@@ -63,6 +64,10 @@ fn main() {
         native_option,
         Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc, tx, apps)))),
     );
+
+    //graceful shutdown
+    RUNNING.store(false, Ordering::Release);
+    handle.join().unwrap();
 }
 #[derive(Default)]
 struct NameNBox {
@@ -76,6 +81,7 @@ struct MyEguiApp {
     dailies: Vec<NameNBox>,
     app_name: String,
     daily: String,
+    first_run: bool,
 }
 
 impl MyEguiApp {
@@ -98,6 +104,7 @@ impl MyEguiApp {
         Self {
             tx: Some(tx),
             apps,
+            first_run: true,
             ..Default::default()
         }
     }
@@ -105,6 +112,33 @@ impl MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.first_run {
+            self.first_run = false;
+
+            let mut path = get_folder_path();
+            path.push(DAILIES_FILE);
+
+            let content = match fs::read_to_string(&path) {
+                Ok(content) => content,
+                _ => {
+                    fs::write(&path, "").unwrap();
+                    String::new()
+                }
+            };
+            for line in content.lines() {
+                let namenbox = NameNBox {
+                    name: line.to_string(),
+                    done: false,
+                };
+                self.dailies.push(namenbox);
+            }
+        }
+
+        if !RUNNING.load(Ordering::Acquire) {
+            goodbye_screen(ui);
+            return;
+        }
+
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_space(4.0);
@@ -131,7 +165,8 @@ impl eframe::App for MyEguiApp {
                         );
 
                         if ui.button("Add app").clicked() {
-                            let path = get_file_path();
+                            let mut path = get_folder_path();
+                            path.push(BLACKLISTED_APPS_FILE);
 
                             let mut file = OpenOptions::new()
                                 .append(true)
@@ -161,7 +196,9 @@ impl eframe::App for MyEguiApp {
                     for app in apps.iter() {
                         if app_row(ui, &app.name) {
                             removed_app_name = app.name.clone();
-                            let path = get_file_path();
+                            let mut path = get_folder_path();
+                            path.push(BLACKLISTED_APPS_FILE);
+
                             let content = fs::read_to_string(&path).unwrap();
 
                             let mut kept = String::new();
@@ -193,6 +230,17 @@ impl eframe::App for MyEguiApp {
                                 name: std::mem::take(&mut self.daily),
                                 done: false,
                             };
+
+                            let mut path = get_folder_path();
+                            path.push(DAILIES_FILE);
+
+                            let mut file = OpenOptions::new()
+                                .append(true)
+                                .create(true)
+                                .open(path)
+                                .unwrap();
+
+                            writeln!(file, "{}", &daily.name).unwrap();
 
                             self.dailies.push(daily);
                         }
@@ -277,6 +325,25 @@ fn app_row(ui: &mut egui::Ui, name: &str) -> bool {
             });
         });
     remove_clicked
+}
+
+/// Full-window screen shown after all dailies are done and apps are unblocked.
+fn goodbye_screen(ui: &mut egui::Ui) {
+    egui::CentralPanel::default().show(ui, |ui| {
+        ui.vertical_centered(|ui| {
+            // push the text down so it sits roughly in the middle of the window
+            ui.add_space((ui.available_height() - 110.0).max(0.0) / 2.0);
+            ui.label(egui::RichText::new("✔").size(36.0).color(TEXT_WEAK));
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("Good bye")
+                    .size(32.0)
+                    .strong()
+                    .color(TEXT_STRONG),
+            );
+            ui.label(egui::RichText::new("See you tomorrow.").size(17.0).weak());
+        });
+    });
 }
 
 /// Draws a dark rounded "card" with a title, and puts `add_contents` inside it.
@@ -367,7 +434,8 @@ struct RunningApplications;
 impl RunningApplications {
     fn get_app_names_as_checkboxes(&self) -> Vec<NameNBox> {
         let mut apps: Vec<NameNBox> = Vec::new();
-        let path = get_file_path();
+        let mut path = get_folder_path();
+        path.push(BLACKLISTED_APPS_FILE);
 
         if let Ok(lines) = fs::read_to_string(&path) {
             for line in lines.lines() {
@@ -460,7 +528,7 @@ fn show_month_progress() -> Vec<String> {
     v_weekdays
 }
 
-fn get_file_path() -> PathBuf {
+fn get_folder_path() -> PathBuf {
     let Ok(appdata_path) = std::env::var("APPDATA") else {
         eprintln!("APPDATA is not found");
         std::process::exit(1);
@@ -473,6 +541,5 @@ fn get_file_path() -> PathBuf {
         fs::create_dir(&path).unwrap();
     }
 
-    path.push(BLACKLISTED_APPS_FILE);
     path
 }
