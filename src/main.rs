@@ -127,7 +127,7 @@ impl eframe::App for MyEguiApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.app_name)
                                 .hint_text("e.g. steam.exe")
-                                .desired_width(ui.available_width() - 90.0),
+                                .desired_width(ui.available_width() - 110.0),
                         );
 
                         if ui.button("Add app").clicked() {
@@ -159,8 +159,7 @@ impl eframe::App for MyEguiApp {
                     }
                     let mut removed_app_name = String::from("");
                     for app in apps.iter() {
-                        app_row(ui, &app.name);
-                        if ui.small_button("x").on_hover_text("Remove").clicked() {
+                        if app_row(ui, &app.name) {
                             removed_app_name = app.name.clone();
                             let path = get_file_path();
                             let content = fs::read_to_string(&path).unwrap();
@@ -186,7 +185,7 @@ impl eframe::App for MyEguiApp {
                         ui.add(
                             egui::TextEdit::singleline(&mut self.daily)
                                 .hint_text("New daily…")
-                                .desired_width(ui.available_width() - 90.0),
+                                .desired_width(ui.available_width() - 110.0),
                         );
 
                         if ui.button("Add daily").clicked() {
@@ -224,11 +223,18 @@ impl eframe::App for MyEguiApp {
                         }
                     }
 
+                    ui.label(
+                        egui::RichText::new("Check off every daily to unblock your apps.").weak(),
+                    );
+                    ui.add_space(4.0);
+
                     if ui
                         .add_enabled(
                             is_done,
-                            egui::Button::new("Finished all Dailies, Unblock everything"),
+                            egui::Button::new("Finished all Dailies, Unblock everything")
+                                .min_size(egui::vec2(ui.available_width(), 34.0)),
                         )
+                        .on_disabled_hover_text("Finish every daily first")
                         .clicked()
                     {
                         RUNNING.store(false, Ordering::Release);
@@ -250,16 +256,27 @@ const TEXT: egui::Color32 = egui::Color32::from_gray(205);
 const TEXT_STRONG: egui::Color32 = egui::Color32::from_gray(232);
 const TEXT_WEAK: egui::Color32 = egui::Color32::from_gray(125);
 
-/// One blocked app shown as a small rounded row.
-fn app_row(ui: &mut egui::Ui, name: &str) {
+/// One blocked app shown as a small rounded row, with a remove button on the right.
+/// Returns true when the remove button was clicked.
+fn app_row(ui: &mut egui::Ui, name: &str) -> bool {
+    let mut remove_clicked = false;
     egui::Frame::new()
         .fill(ROW)
         .corner_radius(6.0)
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(10, 4))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new(name).monospace());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(name).monospace());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    remove_clicked = ui
+                        .small_button(egui::RichText::new("✖").color(TEXT_WEAK))
+                        .on_hover_text("Remove")
+                        .clicked();
+                });
+            });
         });
+    remove_clicked
 }
 
 /// Draws a dark rounded "card" with a title, and puts `add_contents` inside it.
