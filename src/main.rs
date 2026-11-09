@@ -4,6 +4,7 @@ use eframe::egui::{self, FontDefinitions, ThemePreference};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::ops::Sub;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -16,6 +17,7 @@ const _COMPLETED_BOX: &str = "[x]";
 const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 const APP_FOLDER_NAME: &str = "abs_todo";
 const BLACKLISTED_APPS_FILE: &str = "apps.txt";
+static RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn main() {
     //only windows for now
@@ -45,7 +47,7 @@ fn main() {
 
     //closing apps on repeat
     thread::spawn(move || {
-        loop {
+        while RUNNING.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(2));
             running_apps.close_apps(&apps_for_thread, &mut sys);
 
@@ -74,7 +76,6 @@ struct MyEguiApp {
     dailies: Vec<NameNBox>,
     app_name: String,
     daily: String,
-    done: bool,
 }
 
 impl MyEguiApp {
@@ -216,10 +217,22 @@ impl eframe::App for MyEguiApp {
                 ui.add_space(10.0);
 
                 card(ui, "Progress", |ui| {
-                    //Show daily streak progress
+                    let mut is_done = true;
+                    for daily in &self.dailies {
+                        if !daily.done {
+                            is_done = false;
+                        }
+                    }
 
-                    //Show a new screen for finishing daily (unblock blocking loop)
-                    ui.checkbox(&mut self.done, "Done");
+                    if ui
+                        .add_enabled(
+                            is_done,
+                            egui::Button::new("Finished all Dailies, Unblock everything"),
+                        )
+                        .clicked()
+                    {
+                        RUNNING.store(false, Ordering::Release);
+                    };
                 });
             });
         });
