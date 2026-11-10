@@ -5,7 +5,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::ops::Sub;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -41,8 +40,6 @@ fn main() {
         return;
     };
 
-    let (tx, rx) = channel();
-
     let apps = Arc::new(Mutex::new(apps));
     let apps_for_thread = Arc::clone(&apps);
 
@@ -51,10 +48,10 @@ fn main() {
         while RUNNING.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(2));
             running_apps.close_apps(&apps_for_thread, &mut sys);
-
-            while let Ok(receive) = rx.try_recv() {
-                apps_for_thread.lock().unwrap().push(receive);
-            }
+            //
+            // while let Ok(receive) = rx.try_recv() {
+            //     apps_for_thread.lock().unwrap().push(receive);
+            // }
         }
     });
 
@@ -62,14 +59,14 @@ fn main() {
     let _ = eframe::run_native(
         "abs_todo",
         native_option,
-        Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc, tx, apps)))),
+        Box::new(|cc| Ok(Box::new(MyEguiApp::new(cc, apps)))),
     );
 
     //graceful shutdown
     RUNNING.store(false, Ordering::Release);
     handle.join().unwrap();
 }
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct NameNBox {
     name: String,
     done: bool,
@@ -77,7 +74,6 @@ struct NameNBox {
 #[derive(Default)]
 struct MyEguiApp {
     apps: Arc<Mutex<Vec<NameNBox>>>,
-    tx: Option<Sender<NameNBox>>,
     dailies: Vec<NameNBox>,
     app_name: String,
     daily: String,
@@ -85,11 +81,7 @@ struct MyEguiApp {
 }
 
 impl MyEguiApp {
-    fn new(
-        cc: &eframe::CreationContext<'_>,
-        tx: Sender<NameNBox>,
-        apps: Arc<Mutex<Vec<NameNBox>>>,
-    ) -> Self {
+    fn new(cc: &eframe::CreationContext<'_>, apps: Arc<Mutex<Vec<NameNBox>>>) -> Self {
         let mut fonts = FontDefinitions::default();
 
         fonts
@@ -102,7 +94,6 @@ impl MyEguiApp {
         apply_style(&cc.egui_ctx);
 
         Self {
-            tx: Some(tx),
             apps,
             first_run: true,
             ..Default::default()
@@ -167,20 +158,22 @@ impl eframe::App for MyEguiApp {
                         if ui.button("Add app").clicked() {
                             let mut path = get_folder_path();
                             path.push(BLACKLISTED_APPS_FILE);
-
                             let mut file = OpenOptions::new()
                                 .append(true)
                                 .create(true)
                                 .open(path)
                                 .unwrap();
+
                             let namenbox = NameNBox {
                                 name: self.app_name.trim().to_string().clone(),
                                 done: false,
                             };
 
                             if !self.app_name.trim().is_empty() {
-                                self.tx.clone().unwrap().send(namenbox).unwrap();
+                                //self.tx.clone().unwrap().send(namenbox).unwrap();
 
+                                let mut apps = self.apps.lock().unwrap();
+                                apps.push(namenbox);
                                 writeln!(file, "{}", &self.app_name.trim()).unwrap();
                                 self.app_name = String::from("");
                             }
@@ -251,6 +244,7 @@ impl eframe::App for MyEguiApp {
                         ui.label(egui::RichText::new("No dailies yet.").weak().italics());
                     }
 
+                    let mut remove_daily = String::from("");
                     for daily in &mut self.dailies {
                         let text = if daily.done {
                             egui::RichText::new(&daily.name).strikethrough().weak()
@@ -258,7 +252,12 @@ impl eframe::App for MyEguiApp {
                             egui::RichText::new(&daily.name)
                         };
                         ui.checkbox(&mut daily.done, text);
+                        if ui.button("Remove").clicked() {
+                            remove_daily = daily.name.clone();
+                        };
                     }
+
+                    self.dailies.retain(|d| d.name != remove_daily);
                 });
 
                 ui.add_space(10.0);
@@ -318,7 +317,7 @@ fn app_row(ui: &mut egui::Ui, name: &str) -> bool {
                 ui.label(egui::RichText::new(name).monospace());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     remove_clicked = ui
-                        .small_button(egui::RichText::new("✖").color(TEXT_WEAK))
+                        .small_button(egui::RichText::new("X").color(TEXT_WEAK))
                         .on_hover_text("Remove")
                         .clicked();
                 });
