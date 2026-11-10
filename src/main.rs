@@ -17,16 +17,19 @@ const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 const APP_FOLDER_NAME: &str = "abs_todo";
 const BLACKLISTED_APPS_FILE: &str = "apps.txt";
 const DAILIES_FILE: &str = "dailies.txt";
+const DAILY_STREAK_FILE: &str = "daily_streak.txt";
 static RUNNING: AtomicBool = AtomicBool::new(true);
 
 fn main() {
     //only windows for now
-    let _this_month_progress = show_month_progress();
+    let Ok(mut sys) = System::new() else {
+        eprintln!("couldn't read system info");
+        return;
+    };
 
     let running_apps = RunningApplications;
 
     let apps = running_apps.get_app_names_as_checkboxes();
-
     let native_option = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("abs_todo")
@@ -34,12 +37,6 @@ fn main() {
             .with_min_inner_size([360.0, 420.0]),
         ..Default::default()
     };
-
-    let Ok(mut sys) = System::new() else {
-        eprintln!("couldn't read system info");
-        return;
-    };
-
     let apps = Arc::new(Mutex::new(apps));
     let apps_for_thread = Arc::clone(&apps);
 
@@ -62,7 +59,8 @@ fn main() {
     RUNNING.store(false, Ordering::Release);
     handle.join().unwrap();
 }
-#[derive(Default, Debug)]
+
+#[derive(Default)]
 struct NameNBox {
     name: String,
     done: bool,
@@ -102,6 +100,7 @@ impl eframe::App for MyEguiApp {
         if self.first_run {
             self.first_run = false;
 
+            //checks dailies
             let mut path = get_folder_path();
             path.push(DAILIES_FILE);
 
@@ -119,6 +118,25 @@ impl eframe::App for MyEguiApp {
                 };
                 self.dailies.push(namenbox);
             }
+            path = get_folder_path();
+            path.push(DAILY_STREAK_FILE);
+
+            let content = match fs::read_to_string(&path) {
+                Ok(content) => content,
+                Err(_) => {
+                    fs::write(&path, format!("{}\t{}", get_todays_date(), '0')).unwrap();
+                    let content = fs::read_to_string(&path).unwrap();
+                    content
+                }
+            };
+
+            if content == get_todays_date() {
+                println!("new day");
+            }
+            //check what day it is
+            //data I need date=10112026(day month year)
+            //bool for finish daily or nothing
+            //show whole year
         }
 
         if !RUNNING.load(Ordering::Acquire) {
@@ -296,6 +314,8 @@ impl eframe::App for MyEguiApp {
                 });
             });
         });
+
+        ui.label("test");
     }
 }
 
@@ -548,4 +568,18 @@ fn get_folder_path() -> PathBuf {
     }
 
     path
+}
+
+fn get_todays_date() -> String {
+    let local_time = Local::now();
+    let day = local_time.day();
+    let month = local_time.month();
+    let year = local_time.year();
+
+    let mut date_today = String::from("");
+    date_today.push_str(&day.to_string());
+    date_today.push_str(&month.to_string());
+    date_today.push_str(&year.to_string());
+
+    date_today
 }
