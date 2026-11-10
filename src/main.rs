@@ -48,10 +48,6 @@ fn main() {
         while RUNNING.load(Ordering::Acquire) {
             thread::sleep(Duration::from_secs(2));
             running_apps.close_apps(&apps_for_thread, &mut sys);
-            //
-            // while let Ok(receive) = rx.try_recv() {
-            //     apps_for_thread.lock().unwrap().push(receive);
-            // }
         }
     });
 
@@ -170,8 +166,6 @@ impl eframe::App for MyEguiApp {
                             };
 
                             if !self.app_name.trim().is_empty() {
-                                //self.tx.clone().unwrap().send(namenbox).unwrap();
-
                                 let mut apps = self.apps.lock().unwrap();
                                 apps.push(namenbox);
                                 writeln!(file, "{}", &self.app_name.trim()).unwrap();
@@ -233,9 +227,10 @@ impl eframe::App for MyEguiApp {
                                 .open(path)
                                 .unwrap();
 
-                            writeln!(file, "{}", &daily.name).unwrap();
-
-                            self.dailies.push(daily);
+                            if daily.name.trim() != "" {
+                                writeln!(file, "{}", &daily.name).unwrap();
+                                self.dailies.push(daily);
+                            }
                         }
                     });
 
@@ -256,8 +251,20 @@ impl eframe::App for MyEguiApp {
                             remove_daily = daily.name.clone();
                         };
                     }
+                    if !remove_daily.trim().is_empty() {
+                        let mut context = String::from("");
+                        let mut path = get_folder_path();
+                        path.push(DAILIES_FILE);
 
-                    self.dailies.retain(|d| d.name != remove_daily);
+                        self.dailies.retain(|d| {
+                            if d.name != remove_daily {
+                                context.push_str(d.name.trim());
+                                context.push('\n');
+                            }
+                            d.name != remove_daily
+                        });
+                        fs::write(path, context).unwrap();
+                    }
                 });
 
                 ui.add_space(10.0);
