@@ -2,6 +2,9 @@
 use chrono::{DateTime, Datelike, Days, Weekday, prelude::Local};
 use eframe::egui::{self, FontDefinitions, ThemePreference};
 use std::fs::OpenOptions;
+use std::io::Read;
+use std::io::Seek;
+use std::io::SeekFrom;
 use std::io::Write;
 use std::ops::Sub;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,8 +14,8 @@ use std::time::Duration;
 use std::{fs, path::PathBuf};
 use sysinfo::{ProcessRefreshKind, RefreshKind, Signal, System};
 
-const BOX: &str = "[ ]";
-const _COMPLETED_BOX: &str = "[x]";
+const DAILY_BOX: &str = "[ ]";
+const COMPLETED_BOX: &str = "[x]";
 const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 const APP_FOLDER_NAME: &str = "abs_todo";
 const BLACKLISTED_APPS_FILE: &str = "apps.txt";
@@ -69,6 +72,7 @@ struct NameNBox {
 struct MyEguiApp {
     apps: Arc<Mutex<Vec<NameNBox>>>,
     dailies: Vec<NameNBox>,
+    daily_streaks: Vec<NameNBox>,
     app_name: String,
     daily: String,
     first_run: bool,
@@ -131,12 +135,38 @@ impl eframe::App for MyEguiApp {
             };
 
             if content == get_todays_date() {
+                println!("{:?}", get_todays_date());
                 println!("new day");
             }
-            //check what day it is
-            //data I need date=10112026(day month year)
-            //bool for finish daily or nothing
-            //show whole year
+
+            let lines = content.lines();
+            let mut days = lines.clone().count() as u16;
+
+            days = dailys_past_this_year().sub(days);
+
+            for _ in 1..days {
+                let namenbox = NameNBox {
+                    name: get_todays_date(),
+                    done: false,
+                };
+
+                self.daily_streaks.push(namenbox);
+            }
+            for line in lines {
+                let (name, flag) = line.split_once('\t').unwrap();
+                let flag = match flag {
+                    "1" => true,
+                    "0" => false,
+                    _ => panic!("bad flag: {}", flag),
+                };
+
+                let namenbox = NameNBox {
+                    name: name.to_string(),
+                    done: flag,
+                };
+
+                self.daily_streaks.push(namenbox);
+            }
         }
 
         if !RUNNING.load(Ordering::Acquire) {
@@ -155,8 +185,8 @@ impl eframe::App for MyEguiApp {
                     ui.label(
                         egui::RichText::new(
                             "1. Open the application first\n\
-                     2. Write the .exe name of the application\n\
-                     3. It will close if the file name is correct",
+                            2. Write the .exe name of the application\n\
+                            3. It will close if the file name is correct",
                         )
                         .weak(),
                     );
@@ -309,13 +339,55 @@ impl eframe::App for MyEguiApp {
                         .on_disabled_hover_text("Finish every daily first")
                         .clicked()
                     {
+                        let mut path = get_folder_path();
+                        path.push(DAILY_STREAK_FILE);
+
+                        let mut file = OpenOptions::new()
+                            .read(true)
+                            .write(true)
+                            .create(true)
+                            .open(&path)
+                            .unwrap();
+
+                        let mut day = get_todays_date();
+
+                        println!("{}", file.metadata().unwrap().len());
+
+                        file.seek(SeekFrom::End(-10)).unwrap();
+                        let mut buf = [0u8; 10];
+
+                        file.read(&mut buf).unwrap();
+                        let buf_day = &buf[0..8];
+                        let buf_day = std::str::from_utf8(&buf_day).unwrap().to_string();
+
+                        println!("{buf_day}");
+                        if day == buf_day {
+                            //every line is 10byte 2 2 4 1 1
+                            file.seek(SeekFrom::End(-1)).unwrap();
+                            file.write(b"1").unwrap();
+                        } else {
+                            file.seek(SeekFrom::End(0)).unwrap();
+                            let mut new_day = String::from("\n");
+                            day.push_str("\t1");
+                            new_day += &day;
+                            file.write(new_day.as_bytes()).unwrap();
+                        }
                         RUNNING.store(false, Ordering::Release);
                     };
+
+                    let mut daily_streak = String::from("");
+
+                    for streak in &self.daily_streaks {
+                        if streak.done {
+                            daily_streak += COMPLETED_BOX;
+                        } else {
+                            daily_streak += DAILY_BOX;
+                        }
+                    }
+                    ui.label(daily_streak);
                 });
             });
         });
-
-        ui.label("test");
     }
 }
 
@@ -543,12 +615,12 @@ fn show_month_progress() -> Vec<String> {
                     weekday_index += 1;
                 }
             }
-            v_weekdays[i] += BOX;
+            v_weekdays[i] += DAILY_BOX;
         }
     }
 
     for i in 0..rest_of_the_day as usize {
-        v_weekdays[i] += BOX;
+        v_weekdays[i] += DAILY_BOX;
     }
 
     v_weekdays
@@ -576,10 +648,19 @@ fn get_todays_date() -> String {
     let month = local_time.month();
     let year = local_time.year();
 
-    let mut date_today = String::from("");
-    date_today.push_str(&day.to_string());
-    date_today.push_str(&month.to_string());
-    date_today.push_str(&year.to_string());
+    format!("{:02}{:02}{:04}", &day, &month, &year)
+}
 
-    date_today
+fn dailys_past_this_year() -> u16 {
+    let local_time = Local::now();
+    let current_month = local_time.month();
+
+    let mut days: u16 = 0;
+    for month in 1..current_month {
+        println!("{month}");
+        let month = local_time.with_month(month);
+        days += month.unwrap().num_days_in_month() as u16;
+    }
+
+    days
 }
