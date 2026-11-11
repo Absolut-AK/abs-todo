@@ -146,6 +146,7 @@ impl eframe::App for MyEguiApp {
 
             for _ in 1..days {
                 let namenbox = NameNBox {
+                    //this shouldn't be get_todays_date it should actually get the date it's at
                     name: get_todays_date(),
                     done: false,
                 };
@@ -375,16 +376,8 @@ impl eframe::App for MyEguiApp {
                         RUNNING.store(false, Ordering::Release);
                     };
 
-                    let mut daily_streak = String::from("");
-
-                    for streak in &self.daily_streaks {
-                        if streak.done {
-                            daily_streak += COMPLETED_BOX;
-                        } else {
-                            daily_streak += DAILY_BOX;
-                        }
-                    }
-                    ui.label(daily_streak);
+                    ui.add_space(10.0);
+                    streak_grid(ui, &self.daily_streaks);
                 });
             });
         });
@@ -401,6 +394,65 @@ const ROW: egui::Color32 = egui::Color32::from_gray(34);
 const TEXT: egui::Color32 = egui::Color32::from_gray(205);
 const TEXT_STRONG: egui::Color32 = egui::Color32::from_gray(232);
 const TEXT_WEAK: egui::Color32 = egui::Color32::from_gray(125);
+const DONE_SQUARE: egui::Color32 = egui::Color32::from_gray(175);
+
+/// Year tracker: one small square per day, light when that day's dailies were finished.
+/// Drawn as a single widget (one allocation, squares painted by hand) so 300+ days stay cheap.
+/// Hover a square to see its date.
+fn streak_grid(ui: &mut egui::Ui, days: &[NameNBox]) {
+    const SIZE: f32 = 11.0;
+    const GAP: f32 = 3.0;
+    const STEP: f32 = SIZE + GAP;
+
+    let done = days.iter().filter(|d| d.done).count();
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(done.to_string()).strong().color(TEXT_STRONG));
+        ui.label(egui::RichText::new(format!("of {} days completed", days.len())).weak());
+    });
+    ui.add_space(2.0);
+
+    if days.is_empty() {
+        return;
+    }
+
+    // as many squares per row as fit in the card
+    let columns = (((ui.available_width() + GAP) / STEP).floor() as usize).max(1);
+    let rows = days.len().div_ceil(columns);
+    let size = egui::vec2(
+        columns.min(days.len()) as f32 * STEP - GAP,
+        rows as f32 * STEP - GAP,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+
+    let cell = |i: usize| {
+        let min = rect.min + egui::vec2((i % columns) as f32 * STEP, (i / columns) as f32 * STEP);
+        egui::Rect::from_min_size(min, egui::vec2(SIZE, SIZE))
+    };
+
+    let painter = ui.painter();
+    for (i, day) in days.iter().enumerate() {
+        let fill = if day.done { DONE_SQUARE } else { ROW };
+        painter.rect_filled(cell(i), 2.0, fill);
+    }
+
+    // work out which square the mouse is over from its position
+    if let Some(pos) = response.hover_pos() {
+        let offset = pos - rect.min;
+        let i = (offset.y / STEP) as usize * columns + (offset.x / STEP) as usize;
+        if let Some(day) = days.get(i) {
+            let status = if day.done { "done" } else { "missed" };
+            response.on_hover_text(format!("{} · {status}", pretty_date(&day.name)));
+        }
+    }
+}
+
+/// "11112026" -> "2026/11/11" for the hover text; anything else is shown as-is.
+fn pretty_date(date: &str) -> String {
+    match (date.get(0..2), date.get(2..4), date.get(4..8)) {
+        (Some(d), Some(m), Some(y)) if date.len() == 8 => format!("{y}/{m}/{d}"),
+        _ => date.to_string(),
+    }
+}
 
 /// One blocked app shown as a small rounded row, with a remove button on the right.
 /// Returns true when the remove button was clicked.
