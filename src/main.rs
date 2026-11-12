@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use chrono::{DateTime, Datelike, Days, Weekday, prelude::Local};
+use chrono::{Datelike, prelude::Local};
 use eframe::egui::{self, FontDefinitions, ThemePreference};
 use std::fs::OpenOptions;
 use std::io::Read;
@@ -14,9 +14,6 @@ use std::time::Duration;
 use std::{fs, path::PathBuf};
 use sysinfo::{ProcessRefreshKind, RefreshKind, Signal, System};
 
-const DAILY_BOX: &str = "[ ]";
-const COMPLETED_BOX: &str = "[x]";
-const WEEKDAYS: [&str; 7] = ["月", "火", "水", "木", "金", "土", "日"];
 const APP_FOLDER_NAME: &str = "abs_todo";
 const BLACKLISTED_APPS_FILE: &str = "apps.txt";
 const DAILIES_FILE: &str = "dailies.txt";
@@ -134,14 +131,12 @@ impl eframe::App for MyEguiApp {
                 }
             };
 
-            if content == get_todays_date() {
-                println!("{:?}", get_todays_date());
-                println!("new day");
-            }
-
             let lines = content.lines();
             let mut days = lines.clone().count() as u16;
 
+            //could just used ordinal() instead of creating own function
+            // let local_time = Local::now();
+            // local_time.ordinal()
             days = dailys_past_this_year().sub(days);
 
             for _ in 1..days {
@@ -352,8 +347,6 @@ impl eframe::App for MyEguiApp {
 
                         let mut day = get_todays_date();
 
-                        println!("{}", file.metadata().unwrap().len());
-
                         file.seek(SeekFrom::End(-10)).unwrap();
                         let mut buf = [0u8; 10];
 
@@ -361,7 +354,6 @@ impl eframe::App for MyEguiApp {
                         let buf_day = &buf[0..8];
                         let buf_day = std::str::from_utf8(&buf_day).unwrap().to_string();
 
-                        println!("{buf_day}");
                         if day == buf_day {
                             //every line is 10byte 2 2 4 1 1
                             file.seek(SeekFrom::End(-1)).unwrap();
@@ -406,7 +398,11 @@ fn streak_grid(ui: &mut egui::Ui, days: &[NameNBox]) {
 
     let done = days.iter().filter(|d| d.done).count();
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(done.to_string()).strong().color(TEXT_STRONG));
+        ui.label(
+            egui::RichText::new(done.to_string())
+                .strong()
+                .color(TEXT_STRONG),
+        );
         ui.label(egui::RichText::new(format!("of {} days completed", days.len())).weak());
     });
     ui.add_space(2.0);
@@ -618,65 +614,6 @@ impl RunningApplications {
         }
     }
 }
-fn show_month_progress() -> Vec<String> {
-    let local_time: DateTime<Local> = Local::now();
-
-    let current_day = local_time.day() as u8;
-    let mut rest_of_the_day = local_time.num_days_in_month() - &current_day;
-
-    let day = local_time.day().sub(1).into();
-    let day = Days::new(day);
-    let day = local_time.sub(day);
-    let starting_weekday_of_month = day.weekday();
-
-    let mut weekday_index = match starting_weekday_of_month {
-        Weekday::Mon => 0,
-        Weekday::Tue => 1,
-        Weekday::Wed => 2,
-        Weekday::Thu => 3,
-        Weekday::Fri => 4,
-        Weekday::Sat => 5,
-        Weekday::Sun => 6,
-    };
-
-    let mut weekdays = 0;
-    while let Some(_) = rest_of_the_day.checked_sub(7) {
-        rest_of_the_day -= 7;
-        weekdays += 1;
-    }
-
-    let boxes_weekdays = String::from("");
-    let mut v_weekdays = vec![
-        boxes_weekdays.clone(),
-        boxes_weekdays.clone(),
-        boxes_weekdays.clone(),
-        boxes_weekdays.clone(),
-        boxes_weekdays.clone(),
-        boxes_weekdays.clone(),
-        boxes_weekdays.clone(),
-    ];
-
-    //later i want [?] for if it's hits today [X] for completed day and [ ] for missed days.
-    for _ in 0..weekdays {
-        for i in 0..WEEKDAYS.len() {
-            if v_weekdays[i] == "" {
-                v_weekdays[i] += WEEKDAYS[weekday_index];
-                if (weekday_index + 1) == WEEKDAYS.len() {
-                    weekday_index = 0;
-                } else {
-                    weekday_index += 1;
-                }
-            }
-            v_weekdays[i] += DAILY_BOX;
-        }
-    }
-
-    for i in 0..rest_of_the_day as usize {
-        v_weekdays[i] += DAILY_BOX;
-    }
-
-    v_weekdays
-}
 
 fn get_folder_path() -> PathBuf {
     let Ok(appdata_path) = std::env::var("APPDATA") else {
@@ -705,11 +642,11 @@ fn get_todays_date() -> String {
 
 fn dailys_past_this_year() -> u16 {
     let local_time = Local::now();
+    local_time.with_day(1);
     let current_month = local_time.month();
 
-    let mut days: u16 = 0;
+    let mut days: u16 = local_time.day() as u16;
     for month in 1..current_month {
-        println!("{month}");
         let month = local_time.with_month(month);
         days += month.unwrap().num_days_in_month() as u16;
     }
