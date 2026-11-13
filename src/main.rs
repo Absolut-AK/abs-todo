@@ -2,10 +2,7 @@
 use chrono::{Datelike, prelude::Local};
 use eframe::egui::{self, FontDefinitions, ThemePreference};
 use std::fs::OpenOptions;
-use std::io::Read;
-use std::io::Seek;
-use std::io::SeekFrom;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::ops::Sub;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -102,16 +99,8 @@ impl eframe::App for MyEguiApp {
             self.first_run = false;
 
             //checks dailies
-            let mut path = get_folder_path();
-            path.push(DAILIES_FILE);
+            let content = get_dailies_content();
 
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                _ => {
-                    fs::write(&path, "").unwrap();
-                    String::new()
-                }
-            };
             for line in content.lines() {
                 let namenbox = NameNBox {
                     name: line.to_string(),
@@ -119,35 +108,14 @@ impl eframe::App for MyEguiApp {
                 };
                 self.dailies.push(namenbox);
             }
-            path = get_folder_path();
-            path.push(DAILY_STREAK_FILE);
 
-            let content = match fs::read_to_string(&path) {
-                Ok(content) => content,
-                Err(_) => {
-                    fs::write(&path, format!("{}\t{}", get_todays_date(), '0')).unwrap();
-                    let content = fs::read_to_string(&path).unwrap();
-                    content
-                }
-            };
+            create_missing_year_streak();
 
+            check_year();
+
+            let content = get_daily_streak_content();
             let lines = content.lines();
-            let mut days = lines.clone().count() as u16;
 
-            //could just used ordinal() instead of creating own function
-            // let local_time = Local::now();
-            // local_time.ordinal()
-            days = dailys_past_this_year().sub(days);
-
-            for _ in 1..days {
-                let namenbox = NameNBox {
-                    //this shouldn't be get_todays_date it should actually get the date it's at
-                    name: get_todays_date(),
-                    done: false,
-                };
-
-                self.daily_streaks.push(namenbox);
-            }
             for line in lines {
                 let (name, flag) = line.split_once('\t').unwrap();
                 let flag = match flag {
@@ -155,12 +123,10 @@ impl eframe::App for MyEguiApp {
                     "0" => false,
                     _ => panic!("bad flag: {}", flag),
                 };
-
                 let namenbox = NameNBox {
                     name: name.to_string(),
                     done: flag,
                 };
-
                 self.daily_streaks.push(namenbox);
             }
         }
@@ -640,16 +606,105 @@ fn get_todays_date() -> String {
     format!("{:02}{:02}{:04}", &day, &month, &year)
 }
 
-fn dailys_past_this_year() -> u16 {
-    let local_time = Local::now();
-    local_time.with_day(1);
-    let current_month = local_time.month();
+fn create_missing_year_streak() {
+    let mut path = get_folder_path();
+    path.push(DAILY_STREAK_FILE);
 
-    let mut days: u16 = local_time.day() as u16;
-    for month in 1..current_month {
-        let month = local_time.with_month(month);
-        days += month.unwrap().num_days_in_month() as u16;
+    let file = OpenOptions::new().write(true).read(true).open(&path);
+
+    let mut starting_day = 1;
+    let mut starting_month = 1;
+
+    if let Ok(mut file) = file {
+        file.seek(SeekFrom::End(-10)).unwrap();
+        let mut buf = [0u8; 8];
+
+        file.read_exact(&mut buf).unwrap();
+        starting_day = std::str::from_utf8(&buf[0..2]).unwrap().parse().unwrap();
+        starting_month = std::str::from_utf8(&buf[2..4]).unwrap().parse().unwrap();
     }
 
-    days
+    let local_time = Local::now();
+    let mut lines: Vec<String> = Vec::new();
+    if starting_day == local_time.day() && starting_month == local_time.month() {
+        return;
+    }
+    let mut day = local_time.day();
+
+    let mut month = local_time.month();
+    let year = local_time.year();
+
+    while starting_month != month || starting_day != day {
+        if day == 1 {
+            month = month.sub(1);
+            day = local_time
+                .with_month(local_time.month().sub(month))
+                .unwrap()
+                .num_days_in_month() as u32;
+        }
+
+        lines.push(format!("{:02}{:02}{:04}\t0", &day, &month, &year));
+        day = day.sub(1);
+    }
+    lines.reverse();
+    let content = lines.join("\n");
+
+    let mut file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(&path)
+        .unwrap();
+
+    file.write_all(b"\n").unwrap();
+    file.write_all(content.as_bytes()).unwrap();
+}
+
+fn get_daily_streak_content() -> String {
+    let mut path = get_folder_path();
+    path.push(DAILY_STREAK_FILE);
+
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => {
+            fs::write(&path, format!("{}\t{}", get_todays_date(), '0')).unwrap();
+            let content = fs::read_to_string(&path).unwrap();
+            content
+        }
+    };
+
+    content
+}
+
+fn get_dailies_content() -> String {
+    let mut path = get_folder_path();
+    path.push(DAILIES_FILE);
+
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        _ => {
+            fs::write(&path, "").unwrap();
+            String::new()
+        }
+    };
+    content
+}
+
+fn check_year() {
+    let content = get_daily_streak_content();
+    let lines = content.lines();
+
+    let local_time = Local::now();
+    let last_line = lines.last();
+    let last_line = &last_line.unwrap()[4..8];
+    let year: i32 = last_line.parse().unwrap();
+
+    if year < local_time.year() {
+        let mut path = get_folder_path();
+        path.push(DAILY_STREAK_FILE);
+        let mut new_path = get_folder_path();
+        let name_new_path = format!("{}_{}", local_time.year().sub(-1), DAILY_STREAK_FILE);
+        new_path.push(name_new_path);
+        fs::rename(&path, new_path).unwrap();
+        fs::write(&path, format!("{}\t{}", get_todays_date(), '0')).unwrap();
+    }
 }
