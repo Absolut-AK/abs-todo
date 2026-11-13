@@ -326,7 +326,7 @@ impl eframe::App for MyEguiApp {
                             file.write(b"1").unwrap();
                         } else {
                             file.seek(SeekFrom::End(0)).unwrap();
-                            let mut new_day = String::from("\n");
+                            let mut new_day = String::from("");
                             day.push_str("\t1");
                             new_day += &day;
                             file.write(new_day.as_bytes()).unwrap();
@@ -643,8 +643,8 @@ fn create_missing_year_streak() {
                 .num_days_in_month() as u32;
         }
 
-        lines.push(format!("{:02}{:02}{:04}\t0", &day, &month, &year));
         day = day.sub(1);
+        lines.push(format!("{:02}{:02}{:04}\t0", &day, &month, &year));
     }
     lines.reverse();
     let content = lines.join("\n");
@@ -655,8 +655,8 @@ fn create_missing_year_streak() {
         .open(&path)
         .unwrap();
 
-    file.write_all(b"\n").unwrap();
     file.write_all(content.as_bytes()).unwrap();
+    file.write_all(b"\n").unwrap();
 }
 
 fn get_daily_streak_content() -> String {
