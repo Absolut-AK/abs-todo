@@ -2,7 +2,7 @@
 use chrono::{Datelike, prelude::Local};
 use eframe::egui::{self, FontDefinitions, ThemePreference};
 use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::ops::Sub;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -109,11 +109,11 @@ impl eframe::App for MyEguiApp {
                 self.dailies.push(namenbox);
             }
 
-            create_missing_year_streak();
-
             check_year();
 
-            let content = get_daily_streak_content();
+            create_missing_year_streak();
+
+            let content = get_daily_streak_content().unwrap();
             let lines = content.lines();
 
             for line in lines {
@@ -313,23 +313,24 @@ impl eframe::App for MyEguiApp {
 
                         let mut day = get_todays_date();
 
-                        file.seek(SeekFrom::End(-10)).unwrap();
+                        file.seek(SeekFrom::End(-11)).unwrap();
                         let mut buf = [0u8; 10];
 
-                        file.read(&mut buf).unwrap();
+                        file.read_exact(&mut buf).unwrap();
                         let buf_day = &buf[0..8];
                         let buf_day = std::str::from_utf8(&buf_day).unwrap().to_string();
 
                         if day == buf_day {
                             //every line is 10byte 2 2 4 1 1
-                            file.seek(SeekFrom::End(-1)).unwrap();
-                            file.write(b"1").unwrap();
+                            file.seek(SeekFrom::End(-2)).unwrap();
+                            file.write_all(b"1").unwrap();
                         } else {
                             file.seek(SeekFrom::End(0)).unwrap();
                             let mut new_day = String::from("");
                             day.push_str("\t1");
                             new_day += &day;
-                            file.write(new_day.as_bytes()).unwrap();
+                            file.write_all(new_day.as_bytes()).unwrap();
+                            file.write_all(b"\n").unwrap();
                         }
                         RUNNING.store(false, Ordering::Release);
                     };
@@ -615,8 +616,11 @@ fn create_missing_year_streak() {
     let mut starting_day = 1;
     let mut starting_month = 1;
 
+    let mut fresh_start = true;
+
     if let Ok(mut file) = file {
-        file.seek(SeekFrom::End(-10)).unwrap();
+        fresh_start = false;
+        file.seek(SeekFrom::End(-11)).unwrap();
         let mut buf = [0u8; 8];
 
         file.read_exact(&mut buf).unwrap();
@@ -626,7 +630,7 @@ fn create_missing_year_streak() {
 
     let local_time = Local::now();
     let mut lines: Vec<String> = Vec::new();
-    if starting_day == local_time.day() && starting_month == local_time.month() {
+    if starting_day == local_time.day() && starting_month == local_time.month() && !fresh_start {
         return;
     }
     let mut day = local_time.day();
@@ -635,16 +639,22 @@ fn create_missing_year_streak() {
     let year = local_time.year();
 
     while starting_month != month || starting_day != day {
-        if day == 1 {
+        lines.push(format!("{:02}{:02}{:04}\t0", day, month, year));
+        day = day.sub(1);
+
+        if day == 0 {
             month = month.sub(1);
             day = local_time
-                .with_month(local_time.month().sub(month))
+                .with_day(1)
+                .unwrap()
+                .with_month(month)
                 .unwrap()
                 .num_days_in_month() as u32;
         }
+    }
 
-        day = day.sub(1);
-        lines.push(format!("{:02}{:02}{:04}\t0", &day, &month, &year));
+    if fresh_start {
+        lines.push(format!("{:02}{:02}{:04}\t0", 01, 01, year));
     }
     lines.reverse();
     let content = lines.join("\n");
@@ -659,20 +669,12 @@ fn create_missing_year_streak() {
     file.write_all(b"\n").unwrap();
 }
 
-fn get_daily_streak_content() -> String {
+fn get_daily_streak_content() -> io::Result<String> {
     let mut path = get_folder_path();
     path.push(DAILY_STREAK_FILE);
 
-    let content = match fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(_) => {
-            fs::write(&path, format!("{}\t{}", get_todays_date(), '0')).unwrap();
-            let content = fs::read_to_string(&path).unwrap();
-            content
-        }
-    };
-
-    content
+    let content = fs::read_to_string(&path)?;
+    Ok(content)
 }
 
 fn get_dailies_content() -> String {
@@ -690,7 +692,11 @@ fn get_dailies_content() -> String {
 }
 
 fn check_year() {
-    let content = get_daily_streak_content();
+    let content = match get_daily_streak_content() {
+        Ok(content) => content,
+        Err(_) => return,
+    };
+
     let lines = content.lines();
 
     let local_time = Local::now();
@@ -702,9 +708,8 @@ fn check_year() {
         let mut path = get_folder_path();
         path.push(DAILY_STREAK_FILE);
         let mut new_path = get_folder_path();
-        let name_new_path = format!("{}_{}", local_time.year().sub(-1), DAILY_STREAK_FILE);
+        let name_new_path = format!("{}_{}", local_time.year().sub(1), DAILY_STREAK_FILE);
         new_path.push(name_new_path);
         fs::rename(&path, new_path).unwrap();
-        fs::write(&path, format!("{}\t{}", get_todays_date(), '0')).unwrap();
     }
 }
